@@ -10,7 +10,9 @@ period_names = {
     'Run2_2016': '2016postVFP_UL',
     'Run2_2017': '2017_UL',
     'Run2_2018': '2018_UL',
-}
+    'Run3_2022': '2018_UL', #hotfix
+    'Run3_2022EE': '2018_UL', #hotfix
+    }
 
 def findRefSample(config, sample_type):
     refSample = []
