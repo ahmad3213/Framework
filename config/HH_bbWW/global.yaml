@@ -53,6 +53,11 @@ QCDRegions:
   - SS_Iso
   - OS_AntiIso
   - SS_AntiIso
+  - Zpeak_1b
+  - ZVeto_1b
+  - Zpeak_0b
+  - ZVeto_0b
+  - mll_g125
 
 boosted_categories: []
 
@@ -60,7 +65,7 @@ boosted_categories: []
 triggers:
   e: [singleEleWpTight]
   mu: [singleIsoMu]
-  eE: [singleEleWpTight, diElec]
+  eE: [singleEleWpTight]
   eMu: [singleIsoMu]
   muMu: [singleIsoMu]
 
@@ -122,4 +127,6 @@ scales:
   - Up
   - Down
 deepTauVersion: 2p1
-met_type: "PFMET"
+met_type: "PuppiMET"
+vars_to_plot:
+  - lep1_pt

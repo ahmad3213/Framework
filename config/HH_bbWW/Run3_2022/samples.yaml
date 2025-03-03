@@ -12,10 +12,10 @@ GLOBAL:
     - keep WZ
     - keep ZZ
     - keep ^EGamma_.*
-    - keep ^Muon_.*
-    - keep ^DoubleMuon_.*
-    - keep ^SingleMuon_.*
-    - keep ^MuonEG_.*
+      #- keep ^Muon_.*
+      #- keep ^DoubleMuon_.*
+      #- keep ^SingleMuon_.*
+      #- keep ^MuonEG_.*
   use_stitching: false
 
 

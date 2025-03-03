@@ -6,9 +6,8 @@ loadTF = False
 loadHHBtag = False
 lepton_legs = [ "lep1", "lep2" ]
 
-
-Muon_int_observables = ["Muon_tightId","Muon_highPtId","Muon_pfIsoId"]
-Muon_float_observables = ["Muon_tkRelIso", "Muon_pfRelIso04_all","Muon_miniPFRelIso_all"]
+Muon_int_observables = ["Muon_tightId","Muon_highPtId","Muon_pfIsoId","Muon_mediumId", "Muon_mediumPromptId"]
+Muon_float_observables = ["Muon_tkRelIso", "Muon_pfRelIso04_all","Muon_miniPFRelIso_all","Muon_miniIsoId"]
 Muon_observables = Muon_int_observables + Muon_float_observables
 Electron_int_observables = ["Electron_mvaNoIso_WP80", "Electron_mvaIso_WP80"]
 Electron_float_observables = ["Electron_pfRelIso03_all","Electron_miniPFRelIso_all","Electron_mvaIso","Electron_mvaNoIso"]
@@ -250,7 +249,7 @@ def addAllVariables(dfw, syst_name, isData, trigger_class, lepton_legs, isSignal
         # save gen level H->bb
         dfw.Define("H_to_bb", """GetGenHBBCandidate(event, GenPart_pdgId, GenPart_daughters, GenPart_statusFlags, GenPart_pt, GenPart_eta, GenPart_phi, GenPart_mass, GenJet_p4, true)""")
         for var in PtEtaPhiM:
-            dfw.DefineAndAppend(f"genHbb_{var}", f"static_cast<float>(H_to_bb.cand_p4.{var}())")
+            dfw.DefineAndAppend(f"gen_{var}", f"static_cast<float>(H_to_bb.cand_p4.{var}())")
 
         # save gen level b quarks
         for b_quark in [1, 2]:
