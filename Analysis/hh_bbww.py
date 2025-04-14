@@ -4,6 +4,7 @@ if __name__ == "__main__":
 
 from Analysis.HistHelper import *
 from Common.Utilities import *
+
 WorkingPointsParticleNet = {
         "Run3_2022":{
             "Loose":0.047,
@@ -33,12 +34,13 @@ def createKeyFilterDict(global_cfg_dict, year):
     filter_str = ""
     channels_to_consider = global_cfg_dict['channels_to_consider']
     qcd_regions_to_consider = global_cfg_dict['QCDRegions']
-    control_regions_to_consider = global_cfg_dict['ControlRegions']
+    #control_region_to_consider = global_cfg_dict['ControlRegions']
+    # = global_cfg_dict['ControlRegions']
     categories_to_consider = global_cfg_dict["categories"]
     #triggers = global_cfg_dict['hist_triggers']
     #mass_cut_limits = global_cfg_dict['mass_cut_limits']
     for ch in channels_to_consider:
-        for reg in qcd_regions_to_consider+control_regions_to_consider:
+        for reg in qcd_regions_to_consider:
             for cat in categories_to_consider:
                 #print(ch, reg, cat, filter_str)
                 #print()
@@ -71,8 +73,8 @@ def GetBTagWeight(global_cfg_dict,cat,applyBtag=False):
         if global_cfg_dict['btag_wps'][cat]!='' : btag_weight = f"weight_bTagSF_{btag_wps[cat]}_Central"
     else:
         if cat !='btag_shape' and cat !='boosted': btagshape_weight = "weight_bTagShape_Central"
-    return f'1.'
-    #return f'{btag_weight}*{btagshape_weight}'
+    #return f'1.'
+    return f'{btag_weight}*{btagshape_weight}'
 
 
 def GetWeight(channel, cat, boosted_categories):
@@ -84,7 +86,7 @@ def GetWeight(channel, cat, boosted_categories):
     return total_weight
 
 def GetLepWeight(lep_index):
-    weight_Ele = f"(lep{lep_index}_type == static_cast<int>(Leg::e) ? weight_lep{lep_index}_EleSF_wp80noiso_EleIDCentral : 1.0)"
+    weight_Ele = f"(lep{lep_index}_type == static_cast<int>(Leg::e) ? weight_lep{lep_index}_EleSF_wp80iso_EleIDCentral : 1.0)"
 
     #Medium pT Muon SF
     weight_Mu = f"(lep{lep_index}_type == static_cast<int>(Leg::mu) ? weight_lep{lep_index}_MuonID_SF_TightID_TrkCentral * weight_lep{lep_index}_MuonID_SF_LoosePFIsoCentral : 1.0)"
@@ -97,16 +99,14 @@ def GetLepWeight(lep_index):
 
     return f"{weight_Mu} * {weight_Ele}"
 
-
 def GetTriggerWeight():
     weight_MuTrg = f"(lep1_type == static_cast<int>(Leg::mu) ? weight_lep1_TrgSF_singleIsoMu_Central : 1.0)"
     weight_EleTrg = f"(lep1_type == static_cast<int>(Leg::e) ? weight_lep1_TrgSF_singleEleWpTight_Central : 1.0)"
 
-    return f"{weight_MuTrg * weight_EleTrg}"
+    return f"{weight_MuTrg} * {weight_EleTrg}"
 
-def AddQCDInHistDict(var, all_histograms, channels, categories, uncName, all_samples_list, scales, unc_to_not_consider_boosted, wantNegativeContributions=False):
-    return
-
+# def AddQCDInHistDict(var, all_histograms, channels, categories, uncName, all_samples_list, scales, unc_to_not_consider_boosted, wantNegativeContributions=False):
+#     return
 
 
 class DataFrameBuilderForHistograms(DataFrameBuilderBase):
@@ -115,11 +115,11 @@ class DataFrameBuilderForHistograms(DataFrameBuilderBase):
 
         self.df = self.df.Define("nSelBtag_jets", f"int(bjet1_btagPNetB >= {self.bTagWP}) + int(bjet2_btagPNetB >= {self.bTagWP})")
         self.df = self.df.Define("nSelBtag_fatjets", f"int(bjet1_btagPNetB >= {self.bTagWP}) + int(bjet2_btagPNetB >= {self.bTagWP})") #fatjet wp to be updated according to pNet
-        self.df = self.df.Define("boosted", f"SelectedFatJet_pt.size() > 0 && fatsubjet1_isvalid && fatsubjet2_isvalid")
+        self.df = self.df.Define("boosted", f"SelectedFatJet_pt.size() > 0 ")
         self.df = self.df.Define("resolved", f"!boosted && centralJet_pt.size() >= 2")
         self.df = self.df.Define("res1b", f"!boosted && resolved && nSelBtag_jets == 1")
-        self.df = self.df.Define("res2b", f"!boosted && resolved && nSelBtag_jets == 2")
-        self.df = self.df.Define("inclusive", f"!boosted && resolved")
+        self.df = self.df.Define("res2b", f"!boosted && resolved && nSelBtag_jets >= 2")
+        self.df = self.df.Define("inclusive", f"centralJet_pt.size() >= 2")
         self.df = self.df.Define("baseline",f"return true;")
 
     def defineChannels(self):
@@ -129,31 +129,33 @@ class DataFrameBuilderForHistograms(DataFrameBuilderBase):
             #self.df = self.df.Define(f"{channel}", f"channelId=={ch_value}")
 
     def defineLeptonPreselection(self):
-        self.df = self.df.Define("leadingleppT_ele", "((lep1_type == 1 && lep1_pt  > 32 ) || (lep2_type == 1 && lep2_pt  > 32)))")
-        self.df = self.df.Define("leadingleppT_Mu", "((lep1_type == 2 && lep1_pt  > 25 ) || (lep1_type == 2 && lep2_pt  > 25)))")
+        self.df = self.df.Define("leadingleppT_ele", "((lep1_type == 1 && lep1_pt  > 32 ) || (lep2_type == 1 && lep2_pt  > 32))")
+        self.df = self.df.Define("leadingleppT_Mu", "((lep1_type == 2 && lep1_pt  > 25 ) || (lep1_type == 2 && lep2_pt  > 25))")
         self.df = self.df.Define("leadingleppT", "(leadingleppT_ele || leadingleppT_Mu)")   # 32 need to be changed to 25 for DL channel once Double lepton trigger SF are integrated
         self.df = self.df.Define("subleadleppT", "(lep2_type < 1 || (lep1_pt > 15 && lep2_pt > 15))")
-        self.df = self.df.Define("fakeableleppT","(lep1_pt > 10 && (lep2_type < 1 || lep2_pt > 10)")
+        self.df = self.df.Define("fakeableleppT","(lep1_pt > 10 && (lep2_type < 1 || lep2_pt > 10))")
         self.df = self.df.Define("fakeablelep","fakeableleppT && (((lep1_type == 1 && lep1_Electron_miniPFRelIso_all < 0.4) || (lep1_type == 2 && lep1_Muon_pfRelIso04_all< 0.4)) || ((lep2_type < 1 ) || ((lep2_type == 1 && lep2_Electron_miniPFRelIso_all < 0.4) || (lep2_type == 2 && lep2_Muon_pfRelIso04_all < 0.4)) ) )")
-        self.df = self.df.Define("tightlep", "((lep1_type == 2 && lep1_Muon_tightId) || (lep1_type == 1 && lep1_Electron_mvaNoIso_WP80)) && (lep2_type < 1 || ((lep2_type == 2 && lep2_Muon_tightId) || (lep2_type == 1 && lep2_Electron_mvaNoIso_WP80)))")
-        self.df = self.df.Define("tightlep_Iso","tightlep && (((lep1_type == 1 && lep1_Electron_miniPFRelIso_all < 0.25) || (lep1_type == 2 && lep1_Muon_pfRelIso04_all < 0.25)) || ((lep2_type < 1 ) || ((lep2_type == 1 && lep2_Electron_miniPFRelIso_all < 0.25) || (lep2_type == 2 && lep2_Muon_pfRelIso04_all < 0.25)) ) )")
+        self.df = self.df.Define("tightlep", "((lep1_type == 2 && lep1_Muon_tightId == 1) || (lep1_type == 1 && lep1_Electron_mvaNoIso_WP80 == 1)) && (lep2_type < 1 || ((lep2_type == 2 && lep2_Muon_tightId == 1 ) || (lep2_type == 1 && lep2_Electron_mvaNoIso_WP80 == 1)))")
+        self.df = self.df.Define("tightlep_Iso"," (((lep1_type == 1 && lep1_Electron_miniPFRelIso_all < 0.25) || (lep1_type == 2 && lep1_Muon_pfRelIso04_all < 0.25)) || ((lep2_type < 1 ) || ((lep2_type == 1 && lep2_Electron_miniPFRelIso_all < 0.25) || (lep2_type == 2 && lep2_Muon_pfRelIso04_all < 0.25)) ) )")
         self.df = self.df.Define("Single_lep_trg","(HLT_singleIsoMu && (lep1_type == 2 && lep1_HasMatching_singleIsoMu)) || (HLT_singleEleWpTight && (lep1_type == 1 && lep1_HasMatching_singleEleWpTight)) ")
-        self.df = self.df.Define("event_selection","leadingleppT && subleadleppT && Single_lep_trg && tightlep_Iso && ( lep2_type < 1 || ( mll > 12 )")
+        self.df = self.df.Define("event_selection","leadingleppT &&  subleadleppT && Single_lep_trg && tightlep && ( lep2_type < 1 ||  diLep_mass > 12 )")
 
         #self.df = self.df.Filter(f"(passed_SingleEle || passed_singleIsoMu)") # check trigger application
     def defineJetSelections(self):
         self.df = self.df.Define("jet1_isvalid", "centralJet_pt.size() > 0")
         self.df = self.df.Define("jet2_isvalid", "centralJet_pt.size() > 1")
 
-        self.df = self.df.Define("fatjet_isvalid", "(SelectedFatJet_pt.size() > 0 && FatJet_msoftdrop < 210 && ( SelectedFatJet_tau2/SelectedFatJet_tau1 < 0.75))")
-        self.df = self.df.Define("fatsubjet1_isvalid","(SelectedFatJet_SubJet1_isValid && SelectedFatJet_SubJet1_pt > 20 && abs(SelectedFatJet_SubJet1_eta) < 2.5)")
-        self.df = self.df.Define("fatsubjet2_isvalid","(SelectedFatJet_SubJet2_isValid && SelectedFatJet_SubJet2_pt > 20 && abs(SelectedFatJet_SubJet2_eta) < 2.5)")
+        self.df = self.df.Define("fatjet_isvalid", "(SelectedFatJet_pt.size() > 0 && SelectedFatJet_msoftdrop < 210 && ( SelectedFatJet_tau2/SelectedFatJet_tau1 < 0.75))")
+        self.df = self.df.Define("fatsubjet1_isvalid","(SelectedFatJet_SubJet1_isValid == 1  && SelectedFatJet_SubJet1_pt > 20 && abs(SelectedFatJet_SubJet1_eta) < 2.5)")
+        self.df = self.df.Define("fatsubjet2_isvalid","(SelectedFatJet_SubJet2_isValid == 1 && SelectedFatJet_SubJet2_pt > 20 && abs(SelectedFatJet_SubJet2_eta) < 2.5)")
 
         self.df = self.df.Define("bjet1_btagPNetB", "jet1_isvalid ? centralJet_btagPNetB[0] : -1.0")
         self.df = self.df.Define("bjet2_btagPNetB", "jet2_isvalid ? centralJet_btagPNetB[1] : -1.0")
-
-        self.df = self.df.Define("bsubjet1_btagDeepB", "fatjet_isvalid ? SelectedFatJet_SubJet1_btagDeepB[0] : -1.0") #needs to be updated for ak8 PNet
-        self.df = self.df.Define("bsubjet2_btagDeepB", "fatjet_isvalid ? SelectedFatJet_SubJet2_btagDeepB[0] : -1.0") #needs to be updated for ak8 PNet
+        self.df = self.df.Define("bjet1_pt","centralJet_pt[0]")
+        self.df = self.df.Define("bjet2_pt","centralJet_pt[1]")
+        self.df = self.df.Define("Njets","centralJet_pt.size()")
+        # self.df = self.df.Define("bsubjet1_btagDeepB", "fatjet_isvalid && SelectedFatJet_SubJet1_btagDeepB.size() > 0 ? SelectedFatJet_SubJet1_btagDeepB[0] : -1.0") #needs to be updated for ak8 PNet
+        # self.df = self.df.Define("bsubjet2_btagDeepB", "fatjet_isvalid && SelectedFatJet_SubJet2_btagDeepB.size() > 0 ? SelectedFatJet_SubJet2_btagDeepB[0] : -1.0") #needs to be updated for ak8 PNet
 
 
     def defineQCDRegions(self):
@@ -166,17 +168,16 @@ class DataFrameBuilderForHistograms(DataFrameBuilderBase):
         self.df = self.df.Define("OS_AntiIso", f"OS && AntiIso && event_selection")
         self.df = self.df.Define("SS_AntiIso", f"SS && AntiIso && event_selection")
 
-
     def defineControlRegions(self):
         #Define Single Muon Control Region (W Region) -- Require Muon + High MT (>50)
         #Define Double Muon Control Region (Z Region) -- Require lep1 lep2 are opposite sign muons, and combined mass is within 10GeV of 91
-        self.df = self.df.Define("Z_peakRegion_0b", f"(lep1_type == lep2_type ) && (abs(mll - 91.1876) < 10) && OS_Iso && nSelBtag_jets == 0 ")
-        self.df = self.df.Define("Z_peakRegion_1b", f"(lep1_type == lep2_type ) && (abs(mll - 91.1876) < 10) && OS_Iso && nSelBtag_jets == 1 ")
-        self.df = self.df.Define("Z_peakRegion_2b", f"(lep1_type == lep2_type ) && (abs(mll - 91.1876) < 10) && OS_Iso && nSelBtag_jets == 2 ")
-        self.df = self.df.Define("Z_vetoRegion_0b", f"(lep1_type == lep2_type ) && (abs(mll - 91.1876) > 10) && OS_Iso && nSelBtag_jets == 0 ")
-        self.df = self.df.Define("Z_vetoRegion_1b", f"(lep1_type == lep2_type ) && (abs(mll - 91.1876) > 10) && OS_Iso && nSelBtag_jets == 1 ")
-        self.df = self.df.Define("Z_vetoRegion_2b", f"(lep1_type == lep2_type ) && (abs(mll - 91.1876) > 10) && OS_Iso && nSelBtag_jets == 2 ")
-        self.df = self.df.Define("TTbar_Region",f"OS_Iso && lep1_type == lep2_type && mll > 100 ")
+        self.df = self.df.Define("Zpeak_0b", f"(lep1_type == lep2_type ) && (abs(diLep_mass - 91.1876) < 10) && OS_Iso && nSelBtag_jets == 0 ")
+        self.df = self.df.Define("Zpeak_1b", f"(lep1_type == lep2_type ) && (abs(diLep_mass - 91.1876) < 10) && OS_Iso && nSelBtag_jets == 1 ")
+        self.df = self.df.Define("Zpeak_2b", f"(lep1_type == lep2_type ) && (abs(diLep_mass - 91.1876) < 10) && OS_Iso && nSelBtag_jets == 2 ")
+        self.df = self.df.Define("ZVeto_0b", f"(lep1_type == lep2_type ) && (abs(diLep_mass - 91.1876) > 10) && OS_Iso && nSelBtag_jets == 0 ")
+        self.df = self.df.Define("ZVeto_1b", f"(lep1_type == lep2_type ) && (abs(diLep_mass - 91.1876) > 10) && OS_Iso && nSelBtag_jets == 1 ")
+        self.df = self.df.Define("ZVeto_2b", f"(lep1_type == lep2_type ) && (abs(diLep_mass - 91.1876) > 10) && OS_Iso && nSelBtag_jets == 2 ")
+        self.df = self.df.Define("TTbar_CR",f"OS_Iso && lep1_type == lep2_type && diLep_mass > 100 ")
         self.df = self.df.Define("Lep1Lep2Jet1Jet2_mass", f"(lep1_type > 0 && lep2_type > 0 ) ? Lep1Lep2Jet1Jet2_p4.mass() : 0.0")
         self.df = self.df.Define("Lep1Jet1Jet2_mass", f"(lep1_type > 0 ) ? Lep1Jet1Jet2_p4.mass() : 0.0")
 
@@ -225,14 +226,33 @@ def defineAllP4(df):
     for idx in [0,1]:
         df = Utilities.defineP4(df, f"lep{idx+1}")
     df = df.Define(f"centralJet_p4", f"GetP4(centralJet_pt, centralJet_eta, centralJet_phi, centralJet_mass)")
-    for met_var in ['DeepMETResolutionTune', 'DeepMETResponseTune', 'PuppiMET']:
+    df = df.Define(f"centralJet_PNetRegPtRawCorr_p4", f"GetP4(centralJet_pt*(1.0-centralJet_rawFactor)*centralJet_PNetRegPtRawCorr, centralJet_eta, centralJet_phi, centralJet_mass)")
+    df = df.Define(f"centralJet_PNetRegPtRawCorr_PNetRegPtRawCorrNeutrino_p4", f"GetP4(centralJet_pt*(1.0-centralJet_rawFactor)*centralJet_PNetRegPtRawCorr*centralJet_PNetRegPtRawCorrNeutrino, centralJet_eta, centralJet_phi, centralJet_mass)")
+    for met_var in ['DeepMETResolutionTune', 'DeepMETResponseTune', 'PuppiMET', 'met']:
         df = df.Define(f"{met_var}_p4", f"ROOT::Math::LorentzVector<ROOT::Math::PtEtaPhiM4D<double>>({met_var}_pt,0.,{met_var}_phi,0.)")
+    df = df.Define('HT', f"Sum(centralJet_pt)")
+
+    df = df.Define('dR_dilep', f"ROOT::Math::VectorUtil::DeltaR(lep1_p4, lep2_p4)")
+    df = df.Define('dR_dibjet', f"ROOT::Math::VectorUtil::DeltaR(centralJet_p4[0], centralJet_p4[1])")
+    df = df.Define('dR_dilep_dibjet', f"ROOT::Math::VectorUtil::DeltaR((lep1_p4+lep2_p4), (centralJet_p4[0]+centralJet_p4[1]))")
+    #df = df.Define('dR_dilep_dijet', f"(centralJet_pt.size() >= 4) ? ROOT::Math::VectorUtil::DeltaR((lep1_p4+lep2_p4), (centralJet_p4[2]+centralJet_p4[3])) : -100.")
+    df = df.Define('dPhi_lep1_lep2', f"ROOT::Math::VectorUtil::DeltaPhi(lep1_p4,lep2_p4)")
+    df = df.Define('dPhi_jet1_jet2', f"ROOT::Math::VectorUtil::DeltaPhi(centralJet_p4[0],centralJet_p4[1])")
+    df = df.Define('dPhi_MET_dilep', f"ROOT::Math::VectorUtil::DeltaPhi(met_p4,(lep1_p4+lep2_p4))")
+    df = df.Define('dPhi_MET_dibjet', f"ROOT::Math::VectorUtil::DeltaPhi(met_p4,(centralJet_p4[0]+centralJet_p4[1]))")
+    df = df.Define('min_dR_lep0_jets', f"MinDeltaR(lep1_p4, centralJet_p4)")
+    df = df.Define('min_dR_lep1_jets', f"MinDeltaR(lep2_p4, centralJet_p4)")
+
+    df = df.Define(f"bb_mass","centralJet_pt.size() > 1 ? (centralJet_p4[0]+centralJet_p4[1]).mass() : -1.0")
+    df = df.Define(f"bb_mass_PNetRegPtRawCorr","centralJet_pt.size() > 1 ? (centralJet_PNetRegPtRawCorr_p4[0]+centralJet_PNetRegPtRawCorr_p4[1]).mass() : -100.")
+    df = df.Define(f"bb_mass_PNetRegPtRawCorr_PNetRegPtRawCorrNeutrino","centralJet_pt.size() > 1 ? (centralJet_PNetRegPtRawCorr_PNetRegPtRawCorrNeutrino_p4[0]+centralJet_PNetRegPtRawCorr_PNetRegPtRawCorrNeutrino_p4[1]).mass() : -100.")
 
     df = df.Define(f"diLep_p4", f"(lep1_p4+lep2_p4)")
-    df = df.Define(f"mll", f"(lep1_p4+lep2_p4).mass()")
-    df = df.Define(f"pt_ll", "(tau1_p4+tau2_p4).Pt()")
+    df = df.Define(f"diLep_mass", f"(lep1_type > 0 && lep2_type > 0) ? (lep1_p4+lep2_p4).mass() : -1.0")
+    df = df.Define(f"pt_ll", "(lep1_p4+lep2_p4).Pt()")
     df = df.Define(f"Lep1Lep2Jet1Jet2_p4", f"(centralJet_pt.size() >= 2) ? (lep1_p4+lep2_p4+centralJet_p4[0]+centralJet_p4[1]) : LorentzVectorM()")
     df = df.Define(f"Lep1Jet1Jet2_p4", f"(centralJet_pt.size() >= 2) ? (lep1_p4+centralJet_p4[0]+centralJet_p4[1]) : LorentzVectorM()")
+
     return df
 
 
@@ -242,9 +262,9 @@ def PrepareDfForHistograms(dfForHistograms):
     dfForHistograms.defineLeptonPreselection()
     dfForHistograms.defineJetSelections()
     dfForHistograms.defineQCDRegions()
+    dfForHistograms.defineCategories()
     dfForHistograms.defineControlRegions()
     #dfForHistograms.defineBoostedVariables()
-    dfForHistograms.defineCategories()
     #dfForHistograms.defineTriggers()
     #dfForHistograms.redefineWeights()
     #dfForHistograms.df = createInvMass(dfForHistograms.df)

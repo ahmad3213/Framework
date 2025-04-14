@@ -3,19 +3,20 @@
     - DY
   title: DY
   color: kAzure+10
+  color: kAzure+10
 - name: TT
   types:
     - TT
   title: t#bar{t}
   color: kGreen-3
-- name: W
-  types:
-    - W
-  title: "W #rightarrow l#nu + jets"
-  color: kYellow-7
+# - name: W
+#   types:
+#     - W
+#   title: "W #rightarrow l#nu + jets"
+#   color: kYellow-7
 - name: ST
   types:
-    - ST
+   - ST
   title: SingleTop
   color: kPink+1
 - name: VV
@@ -23,14 +24,32 @@
     - VV
   title: VV
   color: kGreen
-- name: QCD
+#QCDMu
+- name: QCDEM
   types:
-    - QCD
-  title: QCD
+    - QCDEM
+  title: QCDEM
   color: kCyan
-#- name: TTX
-#  title: TTX
-#  color: kCyan
+
+#   types:
+#     - QCDEM
+#   title: QCDEM
+#   color: kCyan
+# - name: QCD_PT
+#   types:
+#     - QCD_PT
+#   title: QCD_PT
+#   color: kBlue
+# - name: QCD_HT
+#   types:
+#     - QCD_HT
+#   title: QCD_HT
+#   color: kViolet+4
+# - name: TTX
+#   types:
+#     - TTX
+#   title: TTX
+#   color: kCyan
 #- name: GluGluToRadion
 #  title: GluGlu2L300
 #  color: kBlack
@@ -40,11 +59,7 @@
 #- name: GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M-800
 #  title: GluGlu2L800
 #  color: kBlack
-
-
-
 #Pick some mass points and scale to see a shape distribution
-
 #- name: GluGluToBulkGraviton_1250
   #title: "GluGluBulkGraviton - 1250 GeV"
   #type: signal
@@ -58,14 +73,28 @@
   #title: "GluGluRadion - 700 GeV"
   #type: signal
   #color: kBlue
-- name: GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M_450
-  title: "GluGluRadion to 2L2Nu - 450 GeV"
-  type: signal
+
+- name: GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M_260
+  title: "Radion-260 GeV"
   color: kViolet
+  type: signal
   types:
     - signal
-
-  #scale: 0.05
+  scale: 1000
+- name: GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M_450
+  title: "Radion-450 GeV"
+  color: kBlack
+  type: signal
+  types:
+    - signal
+  scale: 1000
+- name: GluGlutoRadiontoHHto2B2Vto2B2L2Nu_M_800
+  title: "Radion-800 GeV"
+  color: kBlue
+  type: signal
+  types:
+    - signal
+  scale: 1000
 #- name: VBFToBulkGraviton
 #  title: "qqHH #rightarrow bb#tau#tau BulkGraviton"
 #  type: signal
