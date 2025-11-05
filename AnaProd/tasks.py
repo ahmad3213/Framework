@@ -353,7 +353,7 @@ class AnaTupleTask(Task, HTCondorWorkflow, law.LocalWorkflow):
 
                 centralFileName = os.path.basename(local_input.path)
                 if self.test:
-                    anatuple_cmd.extend(["--nEvents", "1000"])
+                    anatuple_cmd.extend(["--nEvents", "10000"])
                 # ps_call(anatuple_cmd, verbose=1) # this will be uncommented when the anatuple producer will be fully independent on cmsEnv.
                 ps_call(anatuple_cmd, env=self.cmssw_env, verbose=1)
 
