@@ -211,7 +211,9 @@ class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
             self.branch_data
         )
         input = self.input()["anaTuple"][input_index]
-        outFileName = f"histTuple_" + os.path.basename(input.path).split("_")[1]
+        # outFileName = f"histTuple_" + os.path.basename(input.path).split("_")[1] # old
+        outFileName = f"histTuple_" + os.path.basename(input.path).split("_", 1)[1] # konstatnin suggestion
+        # outFileName = "histTuple_" + "_".join(os.path.basename(input.path).split("_")[1:]) #Muhammad hot fix
         output_path = os.path.join(
             "histTuples", self.version, self.period, dataset_name, outFileName
         )

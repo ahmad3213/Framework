@@ -94,6 +94,7 @@ def createHistTuple(
     if triggerFile is not None:
         triggerFile = os.path.join(os.environ["ANALYSIS_PATH"], triggerFile)
         trigger_class = Triggers.Triggers(triggerFile)
+    print("intilization Corrections")
 
     Corrections.initializeGlobal(
         global_params=setup.global_params,
@@ -107,7 +108,7 @@ def createHistTuple(
         load_corr_lib=True,
         trigger_class=trigger_class,
     )
-
+    print("intilization Corrections done")
     histTupleDef.Initialize()
     histTupleDef.analysis_setup(setup)
 
@@ -200,7 +201,6 @@ def createHistTuple(
                     df_is_central=isCentral,
                 )
                 dfw.colToSave.append(desc["weight"])
-
             print("Defining binned columns")
             for var in flatten_vars:
                 dfw.df = dfw.df.Define(f"{var}_bin", f"get_{var}_bin({var})")
@@ -209,6 +209,9 @@ def createHistTuple(
             varToSave = Utilities.ListToVector(list(set(dfw.colToSave)))
             tmp_fileName = f"{fullTreeName}.root"
             tmp_fileNames.append(tmp_fileName)
+            # All columns should now be defined, so you can print values to check
+            # All columns should now be defined, so you can print values to check
+
             print("Creating snapshot")
             snaps.append(
                 dfw.df.Snapshot(fullTreeName, tmp_fileName, varToSave, snapshotOptions)
@@ -278,9 +281,8 @@ if __name__ == "__main__":
             if name in cacheFileNames:
                 raise RuntimeError(f"Cache file for {name} already specified.")
             cacheFileNames[name] = file
-
+    print("HistTupleProducer Line 281: loading histTupleDef ")
     histTupleDef = Utilities.load_module(args.histTupleDef)
-
     snapshotOptions = ROOT.RDF.RSnapshotOptions()
     snapshotOptions.fOverwriteIfExists = False
     snapshotOptions.fLazy = False
@@ -289,7 +291,7 @@ if __name__ == "__main__":
         ROOT.ROOT.RCompressionSetting.EAlgorithm, "k" + args.compressionAlgo
     )
     snapshotOptions.fCompressionLevel = args.compressionLevel
-
+    print("HistTupleProducer Line 291: running histTupleDef ")
     tmp_fileNames = createHistTuple(
         setup=setup,
         dataset_name=args.dataset,
