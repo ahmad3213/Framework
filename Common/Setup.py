@@ -242,6 +242,7 @@ class Setup:
         self,
         ana_path,
         period,
+        law_run_version,
         custom_process_selection=None,
         custom_dataset_selection=None,
         custom_model_selection=None,
@@ -249,6 +250,7 @@ class Setup:
     ):
         self.ana_path = ana_path
         self.period = period
+        self.law_run_version = law_run_version
 
         self.config_path_order = [
             os.path.join(ana_path, "FLAF", "config"),
@@ -427,6 +429,7 @@ class Setup:
         self.cmssw_env_ = None
         self.anaTupleFiles = {}
         self.processors_cache = {}
+        self.fs_das_ = None
 
     def get_processors(self, process_name, stage, create_instances=False):
         key = (process_name, stage, create_instances)
@@ -470,7 +473,18 @@ class Setup:
         if path_to_check.startswith("/"):
             return path_to_check
         else:
-            return WLCGFileSystem(path_or_paths)
+            cfg = self.global_params.get("WLCGFileSystem", {})
+            cache_validity = cfg.get("localPathCacheValidity", 600)
+            host = cfg.get("remotePathCacheHost", None)
+            port = cfg.get("remotePathCachePort", None)
+            verbose = cfg.get("verbose", 0)
+            return WLCGFileSystem(
+                path_or_paths,
+                local_path_cache_validity_period=cache_validity,
+                path_cache_host=host,
+                path_cache_port=port,
+                verbose=verbose,
+            )
 
     def get_fs(self, fs_name, custom_paths=None):
         fs_instance = None
@@ -514,6 +528,12 @@ class Setup:
             return self.fs_dict[fs_name]
 
     @property
+    def fs_das(self):
+        if self.fs_das_ is None:
+            self.fs_das_ = WLCGFileSystem("DAS")
+        return self.fs_das_
+
+    @property
     def cmssw_env(self):
         if self.cmssw_env_ is None:
             self.cmssw_env_ = get_cmsenv(cmssw_path=os.getenv("FLAF_CMSSW_BASE"))
@@ -548,6 +568,7 @@ class Setup:
     def getGlobal(
         ana_path,
         period,
+        law_run_version,
         custom_process_selection=None,
         custom_dataset_selection=None,
         custom_model_selection=None,
@@ -556,6 +577,7 @@ class Setup:
         key = (
             ana_path,
             period,
+            law_run_version,
             custom_process_selection,
             custom_dataset_selection,
             custom_model_selection,
@@ -565,6 +587,7 @@ class Setup:
             Setup._global_instances[key] = Setup(
                 ana_path,
                 period,
+                law_run_version,
                 custom_process_selection=custom_process_selection,
                 custom_dataset_selection=custom_dataset_selection,
                 custom_model_selection=custom_model_selection,

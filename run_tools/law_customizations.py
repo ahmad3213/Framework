@@ -27,11 +27,6 @@ def get_param_value(cls, param_name):
         return None
 
 
-# def get_param_value(cls, param_name):
-#     param = getattr(cls, param_name)
-#     return param.task_value(cls.__name__, param_name)
-
-
 class Task(law.Task):
     """
     Base task that we use to force a version parameter on all inheriting tasks, and that provides
@@ -39,7 +34,7 @@ class Task(law.Task):
     """
 
     version = luigi.Parameter()
-    prefer_params_cli = ["version"]
+    prefer_params_cli = ["version", "tasks_per_job"]
     period = luigi.Parameter()
     customisations = luigi.Parameter(default="")
     test = luigi.IntParameter(default=-1)
@@ -52,6 +47,7 @@ class Task(law.Task):
         self.setup = Setup.getGlobal(
             os.getenv("ANALYSIS_PATH"),
             self.period,
+            self.version,
             custom_process_selection=self.process if len(self.process) > 0 else None,
             custom_dataset_selection=self.dataset if len(self.dataset) > 0 else None,
             custom_model_selection=self.model if len(self.model) > 0 else None,
@@ -62,7 +58,7 @@ class Task(law.Task):
         self._dataset_name_id_dict = None
 
     def store_parts(self):
-        return (self.__class__.__name__, self.version, self.period)
+        return (self.version, self.__class__.__name__, self.period)
 
     @property
     def cmssw_env(self):
@@ -75,6 +71,10 @@ class Task(law.Task):
     @property
     def global_params(self):
         return self.setup.global_params
+
+    @property
+    def fs_default(self):
+        return self.setup.get_fs("default")
 
     @property
     def fs_nanoAOD(self):
@@ -122,7 +122,7 @@ class Task(law.Task):
         return law.LocalFileTarget(self.local_path(*path))
 
     def remote_target(self, *path, fs=None):
-        fs = fs or self.setup.fs_default
+        fs = fs or self.fs_default
         path = os.path.join(*path)
         if type(fs) == str:
             path = os.path.join(fs, path)
@@ -130,7 +130,7 @@ class Task(law.Task):
         return WLCGFileTarget(path, fs)
 
     def remote_dir_target(self, *path, fs=None):
-        fs = fs or self.setup.fs_default
+        fs = fs or self.fs_default
         path = os.path.join(*path)
         if type(fs) == str:
             path = os.path.join(fs, path)
@@ -142,9 +142,6 @@ class Task(law.Task):
             return os.environ["LAW_JOB_HOME"], False
         os.makedirs(self.local_path(), exist_ok=True)
         return tempfile.mkdtemp(dir=self.local_path()), True
-
-    def poll_callback(self, poll_data):
-        update_kinit(verbose=0)
 
     def _create_dataset_mappings(self):
         if self._dataset_id_name_list is None:
@@ -175,6 +172,46 @@ class Task(law.Task):
             raise KeyError(f"dataset name '{dataset_name}' not found")
         return self._dataset_name_id_dict[dataset_name]
 
+    def get_nano_version(self, dataset_name):
+        dataset = self.datasets[dataset_name]
+        isData = dataset["process_group"] == "data"
+        version_label = "data" if isData else "mc"
+        return self.global_params.get("nanoAODVersions", {}).get(
+            version_label, "HLepRare"
+        )
+
+    def get_fs_nanoAOD(self, dataset_name):
+        if dataset_name not in self.datasets:
+            raise KeyError(f"dataset name '{dataset_name}' not found")
+        dataset = self.datasets[dataset_name]
+
+        folder_name = dataset.get("dirName", dataset_name)
+
+        if "fs_nanoAOD" in dataset:
+            return (
+                self.setup.get_fs(f"fs_nanoAOD_{dataset_name}", dataset["fs_nanoAOD"]),
+                folder_name,
+                True,
+            )
+
+        nano_version = self.get_nano_version(dataset_name)
+        if nano_version == "HLepRare":
+            return self.fs_nanoAOD, folder_name, True
+        das_cfg = dataset.get("nanoAOD", {})
+        das_ds_name = None
+        if isinstance(das_cfg, dict):
+            if nano_version in das_cfg:
+                das_ds_name = das_cfg[nano_version]
+        elif isinstance(das_cfg, str):
+            das_ds_name = das_cfg
+
+        if das_ds_name is not None:
+            return self.setup.fs_das, das_ds_name, False
+
+        raise RuntimeError(
+            f"Unable to identify the file source for dataset {dataset_name}"
+        )
+
 
 class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
     """
@@ -202,9 +239,18 @@ class HTCondorWorkflow(law.htcondor.HTCondorWorkflow):
     def htcondor_check_job_completeness(self):
         return False
 
+    def htcondor_poll_callback(self, poll_data):
+        update_kinit(verbose=0)
+        return True
+
     def htcondor_output_directory(self):
         # the directory where submission meta data should be stored
         return law.LocalDirectoryTarget(self.local_path())
+
+    # def htcondor_log_directory(self):
+    #     # the directory where HTCondor should store job logs, it can be the same as the output directory
+    #     path = ("logs",) + self.store_parts()
+    #     return self.remote_dir_target(*path)
 
     def htcondor_bootstrap_file(self):
         # each job can define a bootstrap file that is executed prior to the actual job

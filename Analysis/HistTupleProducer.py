@@ -68,49 +68,15 @@ def createHistTuple(
     range,
     evtIds,
     histTupleDef,
+    isData,
 ):
     treeName = setup.global_params.get("treeName", "Events")
     unc_cfg_dict = setup.weights_config
     hist_cfg_dict = setup.hists
-
-    Baseline.Initialize(False)
-    if dataset_name == "data":
-        dataset_cfg = {}
-        process_name = "data"
-        process = {}
-        isData = True
-        processors_cfg = {}
-        processor_instances = {}
-    else:
-        dataset_cfg = setup.datasets[dataset_name]
-        process_name = dataset_cfg["process_name"]
-        process = setup.base_processes[process_name]
-        isData = dataset_cfg["process_group"] == "data"
-        processors_cfg, processor_instances = setup.get_processors(
-            process_name, stage="HistTuple", create_instances=True
-        )
-    triggerFile = setup.global_params.get("triggerFile")
-    trigger_class = None
-    if triggerFile is not None:
-        triggerFile = os.path.join(os.environ["ANALYSIS_PATH"], triggerFile)
-        trigger_class = Triggers.Triggers(triggerFile)
-    print("intilization Corrections")
-
-    Corrections.initializeGlobal(
-        global_params=setup.global_params,
-        stage="HistTuple",
-        dataset_name=dataset_name,
-        dataset_cfg=dataset_cfg,
-        process_name=process_name,
-        process_cfg=process,
-        processors=processor_instances,
-        isData=isData,
-        load_corr_lib=True,
-        trigger_class=trigger_class,
-    )
-    print("intilization Corrections done")
+    Utilities.InitializeCorrections(setup, dataset_name, stage="HistTuple")
     histTupleDef.Initialize()
     histTupleDef.analysis_setup(setup)
+    isData = dataset_name == "data"
 
     if type(setup.global_params["variables"]) == list:
         variables = setup.global_params["variables"]
@@ -174,6 +140,21 @@ def createHistTuple(
                 )
 
             dfw = histTupleDef.GetDfw(df, setup, dataset_name)
+
+            selection_tags = setup.global_params.get("histTuple_selectors", [])
+            selection_flags = []
+            for tag_name in selection_tags:
+                if not tag_name in setup.global_params:
+                    raise RuntimeError(f"HistTuple Selector {tag_name} doesn't exist!")
+                tags = setup.global_params[tag_name]
+                tag_flags = tags if isinstance(tags, list) else list(tags.keys())
+                if len(tag_flags) > 0:
+                    tag_flags_str = "(" + " || ".join(tag_flags) + ")"
+                    selection_flags.append(tag_flags_str)
+            if len(selection_flags) > 0:
+                selection_str = " && ".join(selection_flags)
+                dfw.df = dfw.df.Filter(selection_str, "events of interest")
+
             iter_descs = [
                 {"source": unc_source, "scale": unc_scale, "weight": "weight_Central"}
             ]
@@ -241,6 +222,7 @@ if __name__ == "__main__":
     parser.add_argument("--channels", type=str, default=None)
     parser.add_argument("--nEvents", type=int, default=None)
     parser.add_argument("--evtIds", type=str, default=None)
+    parser.add_argument("--LAWrunVersion", required=True, type=str)
 
     args = parser.parse_args()
     startTime = time.time()
@@ -248,7 +230,9 @@ if __name__ == "__main__":
     ROOT.gROOT.ProcessLine(".include " + os.environ["FLAF_PATH"])
     ROOT.gROOT.ProcessLine('#include "include/Utilities.h"')
 
-    setup = Setup.getGlobal(os.environ["ANALYSIS_PATH"], args.period)
+    setup = Setup.getGlobal(
+        os.environ["ANALYSIS_PATH"], args.period, args.LAWrunVersion
+    )
 
     setup.global_params["channels_to_consider"] = (
         args.channels.split(",")
@@ -267,6 +251,8 @@ if __name__ == "__main__":
         else "data"
     )
     setup.global_params["process_group"] = process_group
+
+    isData = process_group == "data"
 
     setup.global_params["compute_rel_weights"] = (
         args.compute_rel_weights and process_group != "data"
@@ -301,8 +287,9 @@ if __name__ == "__main__":
         range=args.nEvents,
         evtIds=args.evtIds,
         histTupleDef=histTupleDef,
+        isData=isData,
     )
-    hadd_cmd = ["hadd", "-j", args.outFile]
+    hadd_cmd = ["hadd", "-j", "-ff", args.outFile]
     hadd_cmd.extend(tmp_fileNames)
     ps_call(hadd_cmd, verbose=1)
     if os.path.exists(args.outFile) and len(tmp_fileNames) != 0:

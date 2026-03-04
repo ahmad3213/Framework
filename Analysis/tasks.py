@@ -1,15 +1,11 @@
 import law
 import os
-import yaml
 import contextlib
 import luigi
-import threading
-import copy
 import shutil
 
 
 from FLAF.RunKit.run_tools import ps_call
-from FLAF.RunKit.crabLaw import cond as kInit_cond, update_kinit_thread
 from FLAF.run_tools.law_customizations import (
     Task,
     HTCondorWorkflow,
@@ -19,7 +15,7 @@ from FLAF.AnaProd.tasks import (
     AnaTupleFileListTask,
     AnaTupleMergeTask,
 )
-from FLAF.Common.Utilities import getCustomisationSplit
+from FLAF.Common.Utilities import getCustomisationSplit, ServiceThread
 
 
 class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
@@ -67,6 +63,7 @@ class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                             producer_to_run=producer_to_run,
                         )
                     )
+
             return req_dict
 
         branch_set = set()
@@ -106,6 +103,7 @@ class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                         producer_to_run=producer_name,
                     )
                 )
+
         return reqs
 
     def requires(self):
@@ -135,6 +133,55 @@ class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                     )
             if len(anaCaches) > 0:
                 deps["anaCaches"] = anaCaches
+
+        producers_to_aggregate = []
+        process_group = (
+            self.datasets[dataset_name]["process_group"]
+            if dataset_name != "data"
+            else "data"
+        )
+        for producer_name in producer_list:
+            if producer_name:
+                payload_producers = self.global_params.get("payload_producers")
+                if not payload_producers:
+                    continue
+                producer_cfg = payload_producers[producer_name]
+                needs_aggregation = producer_cfg.get("needs_aggregation", False)
+                target_groups = producer_cfg.get("target_groups", None)
+                applies_for_group = (
+                    target_groups is None or process_group in target_groups
+                )
+                if needs_aggregation:
+                    if applies_for_group:
+                        producers_to_aggregate.append(producer_name)
+
+        if producers_to_aggregate:
+            aggrAnaCaches = {}
+            for producer_name in producers_to_aggregate:
+                aggr_task_branch_map = AnalysisCacheAggregationTask.req(
+                    self,
+                    branch=-1,
+                    producer_to_aggregate=producer_name,
+                ).create_branch_map()
+
+                # find which branch of AnalysisCacheAggregationTask is needed for this producer and dataset
+                branch_idx = -1
+                for aggr_br_idx, (aggr_dataset_name, _) in aggr_task_branch_map.items():
+                    if aggr_dataset_name == dataset_name:
+                        branch_idx = aggr_br_idx
+                        break
+
+                assert branch_idx >= 0, "Must find correct branch"
+
+                aggrAnaCaches[producer_name] = AnalysisCacheAggregationTask.req(
+                    self,
+                    branch=branch_idx,
+                    producer_to_aggregate=producer_name,
+                )
+
+            if aggrAnaCaches:
+                deps["aggrAnaCaches"] = aggrAnaCaches
+
         return deps
 
     @law.dynamic_workflow_condition
@@ -182,9 +229,19 @@ class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
             need_cache_list.append(need_cache)
             producer_list.append(producer_to_run)
 
+        payload_producers = self.global_params.get("payload_producers")
+        if payload_producers:
+            for producer_name, producer_cfg in payload_producers.items():
+                is_global = producer_cfg.get("is_global", False)
+                not_present = producer_name not in producer_list
+                if not_present and is_global:
+                    producer_list.append(producer_name)
+
         for prod_br, (
             dataset_name,
-            dataset_type,
+            process_group,
+            ds_branch,
+            dataset_dependencies,
             input_file_list,
             output_file_list,
             skip_future_tasks,
@@ -195,13 +252,38 @@ class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                 continue
 
             for input_index in range(len(output_file_list)):
-                branches[n] = (
-                    dataset_name,
-                    prod_br,
-                    need_cache_global,
-                    producer_list,
-                    input_index,
-                )
+                producers_to_run = []
+                if payload_producers:
+                    for prod in producer_list:
+                        cfg = payload_producers.get(prod, None)
+                        is_configurable = cfg is not None
+                        if not is_configurable:
+                            producers_to_run.append(prod)
+                            continue
+
+                        target_groups = cfg.get("target_groups", None)
+                        applies_for_group = (
+                            target_groups is None or process_group in target_groups
+                        )
+
+                        if applies_for_group:
+                            producers_to_run.append(prod)
+
+                    branches[n] = (
+                        dataset_name,
+                        prod_br,
+                        need_cache_global,
+                        producers_to_run,
+                        input_index,
+                    )
+                else:
+                    branches[n] = (
+                        dataset_name,
+                        prod_br,
+                        need_cache_global,
+                        producer_list,
+                        input_index,
+                    )
                 n += 1
         return branches
 
@@ -211,11 +293,14 @@ class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
             self.branch_data
         )
         input = self.input()["anaTuple"][input_index]
-        # outFileName = f"histTuple_" + os.path.basename(input.path).split("_")[1] # old
-        outFileName = f"histTuple_" + os.path.basename(input.path).split("_", 1)[1] # konstatnin suggestion
-        # outFileName = "histTuple_" + "_".join(os.path.basename(input.path).split("_")[1:]) #Muhammad hot fix
+        input_name = os.path.basename(input.path)
+        outFileName = (
+            f"histTuple_" + os.path.basename(input.path).split("_", 1)[1]
+            if input_name.startswith("anaTuple_")
+            else input_name
+        )
         output_path = os.path.join(
-            "histTuples", self.version, self.period, dataset_name, outFileName
+            self.version, "HistTuples", self.period, dataset_name, outFileName
         )
         return self.remote_target(output_path, fs=self.fs_HistTuple)
 
@@ -265,6 +350,8 @@ class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                 self.period,
                 "--channels",
                 channels,
+                "--LAWrunVersion",
+                self.version,
             ]
             if compute_unc_histograms:
                 HistTupleProducer_cmd.extend(
@@ -284,9 +371,12 @@ class HistTupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                         cache_file.localize("r")
                     ).path
                 local_anacaches_str = ",".join(
-                    f"{producer}:{path}" for producer, path in local_anacaches.items()
+                    f"{producer}:{path}"
+                    for producer, path in local_anacaches.items()
+                    if path.endswith("root")
                 )
                 HistTupleProducer_cmd.extend(["--cacheFile", local_anacaches_str])
+
             ps_call(HistTupleProducer_cmd, verbose=1)
 
             with self.output().localize("w") as local_output:
@@ -336,7 +426,6 @@ class HistFromNtupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                 self,
                 max_runtime=HistTupleProducerTask.max_runtime._default,
                 branch=prod_br,
-                branches=(prod_br,),
                 customisations=self.customisations,
             )
             for prod_br in prod_br_list
@@ -380,7 +469,7 @@ class HistFromNtupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
         if isinstance(var, dict):
             var = var["name"]
         output_path = os.path.join(
-            "hists", self.version, self.period, var, f"{dataset_name}.root"
+            self.version, "Hists_split", self.period, var, f"{dataset_name}.root"
         )
         return self.remote_target(output_path, fs=self.fs_HistTuple)
 
@@ -426,6 +515,8 @@ class HistFromNtupleProducerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                 var,
                 "--dataset_name",
                 dataset_name,
+                "--LAWrunVersion",
+                self.version,
             ]
             if compute_unc_histograms:
                 HistFromNtupleProducer_cmd.extend(
@@ -506,7 +597,6 @@ class HistMergerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                 self,
                 max_runtime=HistFromNtupleProducerTask.max_runtime._default,
                 branch=prod_br,
-                branches=(prod_br,),
                 customisations=self.customisations,
             )
             for prod_br in tuple(set(br_indices))
@@ -553,7 +643,7 @@ class HistMergerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
     @workflow_condition.output
     def output(self):
         var_name, br_indices, datasets = self.branch_data
-        output_path = os.path.join("merged_hists", self.version, self.period, var_name)
+        output_path = os.path.join(self.version, "Hists_merged", self.period, var_name)
         output_file_name = os.path.join(output_path, f"{var_name}.root")
         return self.remote_target(output_file_name, fs=self.fs_HistTuple)
 
@@ -596,12 +686,7 @@ class HistMergerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
         HaddMergedHistsProducer = os.path.join(
             self.ana_path(), "FLAF", "Analysis", "hadd_merged_hists.py"
         )
-        RenameHistsProducer = os.path.join(
-            self.ana_path(), "FLAF", "Analysis", "renameHists.py"
-        )
 
-        input_dir = os.path.join("hists", self.version, self.period, var_name)
-        input_dir_remote = self.remote_dir_target(input_dir, fs=self.fs_HistTuple)
         all_datasets = []
         local_inputs = []
         with contextlib.ExitStack() as stack:
@@ -611,9 +696,6 @@ class HistMergerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                 local_inputs.append(stack.enter_context(inp.localize("r")).path)
             dataset_names = ",".join(smpl for smpl in all_datasets)
             all_outputs_merged = []
-            outdir_histograms = os.path.join(
-                self.version, self.period, "merged", var_name, "tmp"
-            )
             if len(uncNames) == 1:
                 with self.output().localize("w") as outFile:
                     MergerProducer_cmd = [
@@ -631,68 +713,50 @@ class HistMergerTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                         channels,
                         "--period",
                         self.period,
+                        "--LAWrunVersion",
+                        self.version,
                     ]
                     MergerProducer_cmd.extend(local_inputs)
                     ps_call(MergerProducer_cmd, verbose=1)
             else:
+                job_home, remove_job_home = self.law_job_home()
                 for uncName in uncNames:
                     final_histname = f"{var_name}_{uncName}.root"
-                    tmp_outfile_merge = os.path.join(outdir_histograms, final_histname)
-                    tmp_outfile_merge_remote = self.remote_target(
-                        tmp_outfile_merge, fs=self.fs_histograms
-                    )
-                    with tmp_outfile_merge_remote.localize(
-                        "w"
-                    ) as tmp_outfile_merge_unc:
-                        MergerProducer_cmd = [
-                            "python3",
-                            MergerProducer,
-                            "--outFile",
-                            tmp_outfile_merge_unc.path,
-                            "--var",
-                            var_name,
-                            "--dataset_names",
-                            dataset_names,
-                            "--uncSource",
-                            uncName,
-                            "--channels",
-                            channels,
-                            "--period",
-                            self.period,
-                        ]
-                        MergerProducer_cmd.extend(local_inputs)
-                        ps_call(MergerProducer_cmd, verbose=1)
-                        all_outputs_merged.append(tmp_outfile_merge)
-            if len(uncNames) > 1:
-                all_uncertainties_string = ",".join(unc for unc in uncNames)
-                tmp_outFile = self.remote_target(
-                    os.path.join(
-                        outdir_histograms, f"all_histograms_{var_name}_hadded.root"
-                    ),
-                    fs=self.fs_histograms,
-                )
-                with contextlib.ExitStack() as stack:
-                    local_merged_files = []
-                    for infile_merged in all_outputs_merged:
-                        tmp_outfile_merge_remote = self.remote_target(
-                            infile_merged, fs=self.fs_histograms
-                        )
-                        local_merged_files.append(
-                            stack.enter_context(
-                                tmp_outfile_merge_remote.localize("r")
-                            ).path
-                        )
-                    with self.output().localize("w") as outFile:
-                        HaddMergedHistsProducer_cmd = [
-                            "python3",
-                            HaddMergedHistsProducer,
-                            "--outFile",
-                            outFile.path,
-                            "--var",
-                            var_name,
-                        ]
-                        HaddMergedHistsProducer_cmd.extend(local_merged_files)
-                        ps_call(HaddMergedHistsProducer_cmd, verbose=1)
+                    tmp_outfile_merge = os.path.join(job_home, final_histname)
+                    MergerProducer_cmd = [
+                        "python3",
+                        MergerProducer,
+                        "--outFile",
+                        tmp_outfile_merge,
+                        "--var",
+                        var_name,
+                        "--dataset_names",
+                        dataset_names,
+                        "--uncSource",
+                        uncName,
+                        "--channels",
+                        channels,
+                        "--period",
+                        self.period,
+                        "--LAWrunVersion",
+                        self.version,
+                    ]
+                    MergerProducer_cmd.extend(local_inputs)
+                    ps_call(MergerProducer_cmd, verbose=1)
+                    all_outputs_merged.append(tmp_outfile_merge)
+                with self.output().localize("w") as outFile:
+                    HaddMergedHistsProducer_cmd = [
+                        "python3",
+                        HaddMergedHistsProducer,
+                        "--outFile",
+                        outFile.path,
+                        "--var",
+                        var_name,
+                    ]
+                    HaddMergedHistsProducer_cmd.extend(all_outputs_merged)
+                    ps_call(HaddMergedHistsProducer_cmd, verbose=1)
+                if remove_job_home:
+                    shutil.rmtree(job_home)
 
 
 class AnalysisCacheTask(Task, HTCondorWorkflow, law.LocalWorkflow):
@@ -713,6 +777,9 @@ class AnalysisCacheTask(Task, HTCondorWorkflow, law.LocalWorkflow):
         self.max_runtime = self.global_params["payload_producers"][
             self.producer_to_run
         ].get("max_runtime", 2.0)
+        self.output_file_extension = self.global_params["payload_producers"][
+            self.producer_to_run
+        ].get("save_as", "root")
 
     def workflow_requires(self):
         merge_organization_complete = AnaTupleFileListTask.req(
@@ -825,43 +892,37 @@ class AnalysisCacheTask(Task, HTCondorWorkflow, law.LocalWorkflow):
 
     @workflow_condition.output
     def output(self):
-        dataset_name, prod_br, need_cache_global, producer_list, input_index = (
-            self.branch_data
-        )
-        outFileName = os.path.basename(self.input()["anaTuple"][input_index].path)
+        dataset_name, _, _, _, input_index = self.branch_data
+        inputFilePath = self.input()["anaTuple"][input_index].path
+        outFileNameWithoutExtension = os.path.basename(inputFilePath).split(".")[0]
+        outFileName = f"{outFileNameWithoutExtension}.{self.output_file_extension}"
         output_path = os.path.join(
-            "AnalysisCache",
             self.version,
+            "AnalysisCache",
+            self.producer_to_run,
             self.period,
             dataset_name,
-            self.producer_to_run,
             outFileName,
         )
         return self.remote_target(output_path, fs=self.fs_anaCacheTuple)
 
     def run(self):
-        dataset_name, prod_br, need_cache_global, producer_list, input_index = (
-            self.branch_data
-        )
-        unc_config = os.path.join(
-            self.ana_path(), "config", self.period, f"weights.yaml"
-        )
-        analysis_cache_producer = os.path.join(
-            self.ana_path(), "FLAF", "Analysis", "AnalysisCacheProducer.py"
-        )
-        global_config = os.path.join(self.ana_path(), "config", "global.yaml")
-        thread = threading.Thread(target=update_kinit_thread)
-        customisation_dict = getCustomisationSplit(self.customisations)
-        channels = (
-            customisation_dict["channels"]
-            if "channels" in customisation_dict.keys()
-            else self.global_params["channelSelection"]
-        )
-        # Channels from the yaml are a list, but the format we need for the ps_call later is 'ch1,ch2,ch3', basically join into a string separated by comma
-        if type(channels) == list:
-            channels = ",".join(channels)
-        thread.start()
-        try:
+        with ServiceThread() as service_thread:
+            dataset_name, prod_br, need_cache_global, producer_list, input_index = (
+                self.branch_data
+            )
+            analysis_cache_producer = os.path.join(
+                self.ana_path(), "FLAF", "Analysis", "AnalysisCacheProducer.py"
+            )
+            customisation_dict = getCustomisationSplit(self.customisations)
+            channels = (
+                customisation_dict["channels"]
+                if "channels" in customisation_dict.keys()
+                else self.global_params["channelSelection"]
+            )
+            # Channels from the yaml are a list, but the format we need for the ps_call later is 'ch1,ch2,ch3', basically join into a string separated by comma
+            if type(channels) == list:
+                channels = ",".join(channels)
             job_home, remove_job_home = self.law_job_home()
             print(f"At job_home {job_home}")
 
@@ -885,7 +946,9 @@ class AnalysisCacheTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                 output_file = self.output()
                 print(f"considering dataset {dataset_name}, and file {input_file.path}")
                 customisation_dict = getCustomisationSplit(self.customisations)
-                tmpFile = os.path.join(job_home, f"AnalysisCacheTask.root")
+                tmpFile = os.path.join(
+                    job_home, f"AnalysisCacheTask.{self.output_file_extension}"
+                )
                 with input_file.localize("r") as local_input:
                     analysisCacheProducer_cmd = [
                         "python3",
@@ -904,6 +967,8 @@ class AnalysisCacheTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                         self.producer_to_run,
                         "--workingDir",
                         job_home,
+                        "--LAWrunVersion",
+                        self.version,
                     ]
                     if (
                         self.global_params["store_noncentral"]
@@ -924,6 +989,12 @@ class AnalysisCacheTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                         ].get("cmssw_env", False)
                         else None
                     )
+
+                    histTupleDef = os.path.join(
+                        self.ana_path(), self.global_params["histTupleDef"]
+                    )
+                    analysisCacheProducer_cmd.extend(["--histTupleDef", histTupleDef])
+
                     ps_call(analysisCacheProducer_cmd, env=prod_env, verbose=1)
                 print(
                     f"Finished producing payload for producer={self.producer_to_run} with name={dataset_name}, file={input_file.path}"
@@ -933,12 +1004,6 @@ class AnalysisCacheTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                     shutil.move(tmpFile, out_local_path)
             if remove_job_home:
                 shutil.rmtree(job_home)
-
-        finally:
-            kInit_cond.acquire()
-            kInit_cond.notify_all()
-            kInit_cond.release()
-            thread.join()
 
 
 class HistPlotTask(Task, HTCondorWorkflow, law.LocalWorkflow):
@@ -1046,8 +1111,8 @@ class HistPlotTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                 for custom_region in custom_regions:
                     rel_path = os.path.join(
                         self.version,
+                        "Plots",
                         self.period,
-                        "plots",
                         var,
                         custom_region,
                         cat,
@@ -1128,6 +1193,8 @@ class HistPlotTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                     self.ana_path(),
                     "--period",
                     self.period,
+                    "--LAWrunVersion",
+                    self.version,
                 ]
                 if plot_wantData:
                     cmd.append("--wantData")
@@ -1138,3 +1205,165 @@ class HistPlotTask(Task, HTCondorWorkflow, law.LocalWorkflow):
                 if plot_rebin:
                     cmd += ["--rebin", "true"]
                 ps_call(cmd, verbose=1)
+
+
+class AnalysisCacheAggregationTask(Task, HTCondorWorkflow, law.LocalWorkflow):
+    max_runtime = copy_param(HTCondorWorkflow.max_runtime, 2.0)
+    n_cpus = copy_param(HTCondorWorkflow.n_cpus, 1)
+    producer_to_aggregate = luigi.Parameter()
+
+    def __init__(self, *args, **kwargs):
+        super(AnalysisCacheAggregationTask, self).__init__(*args, **kwargs)
+
+    @law.dynamic_workflow_condition
+    def workflow_condition(self):
+        return AnaTupleFileListTask.req(self, branch=-1, branches=()).complete()
+
+    def workflow_requires(self):
+        merge_organization_complete = AnaTupleFileListTask.req(
+            self, branches=()
+        ).complete()
+        payload_producers = self.global_params["payload_producers"]
+        if not merge_organization_complete:
+            deps = {
+                "AnaTupleFileListTask": AnaTupleFileListTask.req(
+                    self,
+                    branches=(),
+                    max_runtime=AnaTupleFileListTask.max_runtime._default,
+                    n_cpus=AnaTupleFileListTask.n_cpus._default,
+                ),
+            }
+
+            deps["AnalysisCacheTask"] = AnalysisCacheTask.req(
+                self,
+                branches=(),
+                max_runtime=AnalysisCacheTask.max_runtime._default,
+                n_cpus=AnalysisCacheTask.n_cpus._default,
+                customisations=self.customisations,
+                producer_to_run=self.producer_to_aggregate,
+            )
+            return deps
+
+        deps = {}
+        producers_cache_branch_map = AnalysisCacheTask.req(
+            self, branch=-1, branches=(), producer_to_run=self.producer_to_aggregate
+        ).create_branch_map()
+        branches = [b for b in producers_cache_branch_map.keys()]
+        deps["AnalysisCacheTask"] = AnalysisCacheTask.req(
+            self,
+            branches=tuple(branches),
+            max_runtime=AnalysisCacheTask.max_runtime._default,
+            n_cpus=AnalysisCacheTask.n_cpus._default,
+            customisations=self.customisations,
+            producer_to_run=self.producer_to_aggregate,
+        )
+        return deps
+
+    def requires(self):
+        # I don't need to check here that this producer applies to target group
+        # the reason is that if its in the branch map - it already was checked
+        sample_name, list_of_producer_cache_keys = self.branch_data
+        reqs = [
+            AnalysisCacheTask.req(
+                self,
+                max_runtime=AnalysisCacheTask.max_runtime._default,
+                branch=prod_br,
+                customisations=self.customisations,
+                producer_to_run=self.producer_to_aggregate,
+            )
+            for prod_br in list_of_producer_cache_keys
+        ]
+        return reqs
+
+    @workflow_condition.create_branch_map
+    def create_branch_map(self):
+        # structure of branch map
+        # ---- name of sample,
+        # ---- list of branch indices of the AnalysisCacheTask(producer_to_run=producer_name)
+
+        branches = {}
+        branch_idx = 0
+
+        payload_producers = self.global_params["payload_producers"]
+        producer_cfg = payload_producers[self.producer_to_aggregate]
+        producer_cache_branch_map = AnalysisCacheTask.req(
+            self, branch=-1, branches=(), producer_to_run=self.producer_to_aggregate
+        ).create_branch_map()
+
+        # find which branches of this producer correspond to each sample
+        sample_branch_map = {}
+        for producer_cache_branch_idx, (
+            sample_name,
+            _,
+            _,
+            _,
+            _,
+        ) in producer_cache_branch_map.items():
+            if sample_name not in sample_branch_map:
+                sample_branch_map[sample_name] = []
+            sample_branch_map[sample_name].append(producer_cache_branch_idx)
+
+        target_groups = producer_cfg.get("target_groups", None)
+
+        for sample_name, list_of_producer_cache_keys in sample_branch_map.items():
+            process_group = (
+                self.datasets[sample_name]["process_group"]
+                if sample_name != "data"
+                else "data"
+            )
+            applies_for_group = target_groups is None or process_group in target_groups
+            if applies_for_group:
+                branches[branch_idx] = (sample_name, list_of_producer_cache_keys)
+                branch_idx += 1
+
+        return branches
+
+    @workflow_condition.output
+    def output(self):
+        sample_name, _ = self.branch_data
+        extension = self.global_params["payload_producers"][
+            self.producer_to_aggregate
+        ].get("save_as", "root")
+        output_name = f"aggregatedCache.{extension}"
+        return self.local_target(sample_name, self.producer_to_aggregate, output_name)
+
+    def run(self):
+        sample_name, _ = self.branch_data
+        producers = self.global_params["payload_producers"]
+        cacheAggregator = os.path.join(
+            self.ana_path(), "FLAF", "Analysis", "AnalysisCacheAggregator.py"
+        )
+        with contextlib.ExitStack() as stack:
+            local_output = self.output()
+            inputs = self.input()
+            local_inputs = [
+                stack.enter_context(inp.localize("r")).path for inp in inputs
+            ]
+            assert local_inputs, "`local_inputs` must be a non-empty list"
+            producer_cfg = producers[self.producer_to_aggregate]
+            ext = producer_cfg.get("save_as", "root")
+            job_home, remove_job_home = self.law_job_home()
+            tmpFile = os.path.join(job_home, f"aggregatedCache_tmp.{ext}")
+            aggregate_cmd = [
+                "python3",
+                cacheAggregator,
+                "--outFile",
+                tmpFile,
+                "--period",
+                self.period,
+                "--producer",
+                self.producer_to_aggregate,
+                "--LAWrunVersion",
+                self.version,
+            ]
+            aggregate_cmd.append("--inputFiles")
+            aggregate_cmd.extend(local_inputs)
+            ps_call(aggregate_cmd, verbose=1)
+
+            # For local target: ensure parent directory exists and move directly
+            out_local_path = local_output.path
+            local_output.parent.touch()  # Creates parent directories if needed
+            shutil.move(tmpFile, out_local_path)
+            print(
+                f"Creating aggregated cache for producer {self.producer_to_aggregate} and dataset {sample_name} at {out_local_path}"
+            )

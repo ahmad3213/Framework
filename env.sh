@@ -212,7 +212,7 @@ load_flaf_env() {
 
     export PATH="$FLAF_COMBINE_PATH/build/bin:$PATH"
     export LD_LIBRARY_PATH="$FLAF_COMBINE_PATH/build/lib:$LD_LIBRARY_PATH"
-    export PYTHONPATH="$FLAF_COMBINE_PATH/build/lib/python:$PYTHONPATH"
+    export PYTHONPATH="$FLAF_COMBINE_PATH/build/python:$PYTHONPATH"
     if [ -d "$HH_INFERENCE_PATH" ]; then
       install_inference "$env_file" $node_os $cmb_os $FLAF_COMBINE_VERSION
       export PYTHONPATH="$HH_INFERENCE_PATH:$PYTHONPATH"
@@ -232,6 +232,8 @@ load_flaf_env() {
   set -- "${current_args[@]}"
   #export PATH="$ANALYSIS_SOFT_PATH/bin:$PATH"
   alias cmsEnv="env -i HOME=$HOME ANALYSIS_PATH=$ANALYSIS_PATH ANALYSIS_DATA_PATH=$ANALYSIS_DATA_PATH X509_USER_PROXY=$X509_USER_PROXY FLAF_CMSSW_BASE=$FLAF_CMSSW_BASE FLAF_CMSSW_ARCH=$FLAF_CMSSW_ARCH $FLAF_PATH/cmsEnv.sh"
+
+  ulimit -n 4096
 }
 
 source_env_fn() {

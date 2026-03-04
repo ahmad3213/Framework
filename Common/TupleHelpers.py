@@ -158,15 +158,16 @@ def copyFileContent(
                 return obj_type
         return None
 
-    open_fn = (
-        uproot.update
-        if appendIfExists and os.path.exists(outputFile)
-        else uproot.recreate
-    )
+    if appendIfExists and os.path.exists(outputFile):
+        open_fn = uproot.update
+        open_args = {}
+    else:
+        open_fn = uproot.recreate
+        open_args = {"compression": compression}
     histograms = {}
     to_store_with_rdf = {}
     stored_with_uproot = set()
-    with open_fn(outputFile, compression=compression) as output_file:
+    with open_fn(outputFile, **open_args) as output_file:
         for input in inputs:
             copyInputTrees = input["copyTrees"]
             copyInputHistograms = input["copyHistograms"]
@@ -200,8 +201,8 @@ def copyFileContent(
                         if out_name in histograms:
                             hist, is_converted = histograms[out_name]
                             if not is_converted:
-                                hist = uproot.to_hist(hist)
-                            new_hist = hist + uproot.to_hist(obj)
+                                hist = hist.to_hist()
+                            new_hist = hist + obj.to_hist()
                             histograms[out_name] = (new_hist, True)
                         else:
                             histograms[out_name] = (obj, False)

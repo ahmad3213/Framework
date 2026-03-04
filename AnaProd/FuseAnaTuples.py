@@ -17,6 +17,7 @@ default_values = {
     "float": np.float32(0.0),
     "double": np.float64(0.0),
     "uint8_t": np.uint8(0),
+    "int8_t": np.int8(0),
     "int16_t": np.int16(0),
 }
 
@@ -162,15 +163,6 @@ def fuseAnaTuples(*, config, work_dir, tuple_output, report_output=None, verbose
 
     special_columns = ["valid", full_event_id_column]
 
-    snapshotOptions = ROOT.RDF.RSnapshotOptions()
-    snapshotOptions.fOverwriteIfExists = True
-    snapshotOptions.fLazy = False
-    snapshotOptions.fMode = "RECREATE"
-    snapshotOptions.fCompressionAlgorithm = (
-        ROOT.ROOT.RCompressionSetting.EAlgorithm.kZLIB
-    )
-    snapshotOptions.fCompressionLevel = 4
-
     if verbose > 1:
         verbosity_keeper = ROOT.RLogScopedVerbosity(
             ROOT.Detail.RDF.RDFLogChannel(), 100
@@ -250,6 +242,19 @@ def fuseAnaTuples(*, config, work_dir, tuple_output, report_output=None, verbose
             if key not in ["output_files", "reference_file"]:
                 report[key] = value
         report["n_events"] = n_unique_events
+        report["trees"] = []
+        for unc_source, unc_scale in inputs.keys():
+            report["trees"].append(
+                {
+                    "unc_source": unc_source,
+                    "unc_scale": unc_scale,
+                    "tree_name": (
+                        f"{tree_name}__{unc_source}__{unc_scale}"
+                        if unc_source != central
+                        else tree_name
+                    ),
+                }
+            )
         report_output_path = os.path.join(work_dir, report_output)
         with open(report_output_path, "w") as f:
             json.dump(report, f, indent=4)
