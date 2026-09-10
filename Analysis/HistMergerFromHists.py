@@ -328,7 +328,7 @@ if __name__ == "__main__":
     ## ============================================================
     ## BBWW FAKE ESTIMATION
     ## ============================================================
-
+    fake_estimation_cfg = {}
     if analysis_import == "Analysis.hh_bbww":
         fake_estimation_cfg = global_cfg_dict.get("fake_estimation", {})
     # Default: fake estimation is disabled
